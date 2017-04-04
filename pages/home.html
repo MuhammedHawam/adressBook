@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+
+    <title>Address Book</title>
+
+    <!-- Bootstrap core CSS -->
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Custom styles for this template -->
+    <link href="/css/starter-template.css" rel="stylesheet">
+    <style>
+        #contact-results button{
+            color: white;
+            background-color: red;
+            border-color: #black;
+            border-radius: 8px;
+        }
+        #table-info tr:hover,
+        #view-results tr:hover,
+        #view-page th:hover {
+            background-color: lightgrey;
+            cursor: pointer;
+        }
+    </style>
+
+</head>
+
+<body>
+
+<nav class="navbar navbar-toggleable-md navbar-inverse bg-inverse fixed-top">
+    <button class="navbar-toggler navbar-toggler-right" type="button" data-toggle="collapse" data-target="#navbarsExampleDefault" aria-controls="navbarsExampleDefault" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+    </button>
+    <a class="navbar-brand" href="#">Address Book</a>
+
+    <div class="collapse navbar-collapse" id="navbarsExampleDefault">
+        <ul class="navbar-nav mr-auto">
+            <li class="nav-item active">
+                <a class="nav-link" href="home">Home <span class="sr-only"></span></a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="aboutUs">About us</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="contactUs">Contact us</a>
+            </li>
+            <li>
+                <form action="/login" method="get">
+                    <button type="submit" style="position: absolute; right: 10px; top: 10px; background-color: #2D2A26; color: white;" onclick="LogOutFunc()">Logout</button>
+                </form>
+            </li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+
+    <div class="starter-template">
+        <h1>Home Page</h1>
+        <p class="lead">Address Book</p>
+    </div>
+
+</div><!-- /.container -->
+<!------------------------------------->
+<!-- addInfo-form was search-form -->
+<div id="view-page">
+    <form id="addInfo-form" onsubmit="return false" style="text-align: center; width: 800px; clear:both; margin: 0 auto; ">
+        Name:   <input name="name"/><br>
+        Mobile: <input name="mob"/><br>
+        Email:  <input name="email"/><br>
+        Address:<input name="address"/><br>
+        Nationality: <input name="nationality"><br>
+        <input type="submit" value="Confirm" onclick="subConfirm()"/>
+    </form>
+    <br>
+    <table id="table-info" width="100%">
+        <thead>
+        <tr style="text-align: left;">
+            <th  width="15%">Name</th>
+            <th  width="15%">Mobile</th>
+            <th  width="15%">Email</th>
+            <th  width="15%">Address</th>
+            <th  width="10%">Nationality</th>
+            <th  width="10%"></th>
+            <th  width="10%"></th>
+        </tr>
+        </thead>
+        <tbody id="contact-results">
+            {{range .Cont}}
+            <tr id="contact-row-{{.Name}}">
+                <td >{{.Name}}</td>
+                <td >{{.Mob}}</td>
+                <td >{{.Email}}</td>
+                <td >{{.Address}}</td>
+                <td >{{.Nationality}}</td>
+                <td>
+                    <button id="delete-btn" onclick="deleteContact({{.Name}})">Delete</button>
+                </td>
+                <td>
+                    <button id="view-details-btn" onclick="viewDetails({{.Name}})">View Details</button>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+
+</div>
+
+<div id="contact-info" style="display: none;">
+
+    <table  width="100%">
+        <thead>
+        <tr style="text-align: left;">
+            <th  width="25%">Name</th>
+            <th  width="25%">Mobile</th>
+
+
+            <th  width="20%"></th>
+
+        </tr>
+        </thead>
+        <tbody id="contact-nums">
+        {{range .Cont}}
+        <tr id="contact-nums-{{.Name}}">
+            <td id="hobba">{{.Name}}</td>
+            <td >{{.Mob}}</td>
+
+
+            <td>
+                <button id="delete-contact-btn" onclick="deleteOneContact({{.Mob}})">Delete</button>
+            </td>
+
+        </tr>
+        {{end}}
+        </tbody>
+    </table>
+    <form id="form-oneContact" onsubmit="return false" style=" position: absolute; right:50px; top:100px; background-color: #660000; color: white; " >
+        Number: <input name="contact_numbers"/><br>
+        <input id="input-addCnt" type="submit" value="Add" onclick='addMoreNums()'/>
+    </form>
+</div>
+<!--------------------------------------->
+<!-- Bootstrap core JavaScript
+================================================== -->
+<!-- Placed at the end of the document so the pages load faster -->
+<script type="text/javascript" src="http://code.jquery.com/jquery-2.1.4.min.js"></script>
+<script type="text/javascript">
+    function addMoreNums(){
+
+        var name = document.getElementById('contact-nums').getElementsByTagName("td")[0].innerHTML;
+        $.ajax({
+            method: "PUT",
+            url: "/home/" + name,
+            data: $("#form-oneContact").serialize(),
+            success: function(data){
+                 var parsed = JSON.parse(data);
+                 if (!parsed) return;
+
+                 var contactResults = $("#contact-nums");
+                 console.log(parsed.Name);
+
+
+                 var row = $("<tr id='contact-row-" + parsed.Mob + "'><td></td><td>" + parsed.Mob + "</td><td><button id='my-btn' class='delete-contact-btn' onclick='deleteOneContact(\""+parsed.Mob+"\")'>Delete</button></td></tr>");
+
+                 contactResults.append(row);
+            }
+
+        });
+    }
+    function LogOutFunc(){
+        $.ajax({
+            method: "GET",
+            url:"/login",
+        });
+    }
+    function viewDetails(name){
+
+        $.ajax({
+            method: "GET",
+            url: "/home/"+ name,
+
+            success: function(data){
+                console.log("hobba Name: ",name);
+                console.log("hobba DATA: ",data);
+                var parsed = JSON.parse(data);
+
+                console.log(parsed);
+                if (!parsed) return;
+
+                var contactResults = $("#contact-nums");
+
+                contactResults.empty();
+                parsed.forEach(function(result){
+                    var row = $("<tr id='contact-row-" + result.Name + "'><td>" + result.Name + "</td><td>" + result.Mob + "</td><td><button id='my-btn' class='delete-contact-btn' onclick='deleteOneContact(\""+result.Mob+"\")'>Delete</button></td></tr>");
+
+                    contactResults.append(row);
+                    $("#view-page").hide();
+                    $("#contact-info").show();
+                });
+
+            }
+        });
+
+
+    }
+    function deleteOneContact(number){
+        console.log(number);
+        
+        $.ajax({
+            method: "DELETEE",
+            url: "/add/" + number,
+            success: function(){
+                $("#contact-row-"+ number).remove();
+            }
+        });
+
+    }
+    function deleteContact(name){
+        console.log(name);
+        $.ajax({
+            method: "DELETE",
+            url: "/add/" + name,
+            success: function(){
+                $("#contact-row-" + name).remove();
+            }
+        });
+    }
+    function subConfirm() {
+        $.ajax({
+            url: "/add",
+            type: "PUT",
+            data: $("#addInfo-form").serialize(),
+
+            success: function(rawData) {
+                console.log(rawData);
+                var parsed = JSON.parse(rawData);
+
+                console.log(parsed);
+                if (!parsed) return;
+
+                var contactResults = $("#contact-results");
+                console.log(parsed.Name);
+                var row = $("<tr id='contact-row-" + parsed.Name + "'><td>" + parsed.Name + "</td><td>" + parsed.Mob + "</td><td>" + parsed.Email + "</td><td>" + parsed.Address + "</td><td>" + parsed.Nationality + "</td><td><button id='my-btn' class='delete-btn' onclick='deleteContact(\""+parsed.Name+"\")'>Delete</button></td><td><button class='view-details-btn' onclick='viewDetails(\""+parsed.Name+"\")'>View Details</button></td></tr>");
+
+
+                contactResults.append(row);
+                var x = document.getElementById("my-btn").getAttribute("onclick");
+                console.log("HERE X: ", x);
+                console.log(row);
+
+
+            }
+        });
+        return false;
+    }
+</script>
+</body>
+</html>
