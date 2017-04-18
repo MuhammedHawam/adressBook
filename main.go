@@ -17,13 +17,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"database/sql"
 	"encoding/json"
+
 )
 
-func main() {
-	initDB()
-	serveWeb()
+type DBHandler struct {
+	db *sql.DB //removed declaration here to easily access the variable from our middleware handler
+
 }
-var db *sql.DB //removed declaration here to easily access the variable from our middleware handler
+
 type User struct {
 	UserName string `db:"username"`
 	Secret []byte `db:"secret"`
@@ -47,40 +48,184 @@ type LoginPage struct {
 	Error string
 }
 
-var themeName = getThemeName() //yet to handle and from config file
-var staticPages = populateStaticPages() //collect all pages under pages folder
 
-func initDB(){
-	db, _ = sql.Open("mysql", "root:20121993@/addressBook") //open connection with DB in MySql
+type appHandler struct {
+	*DBHandler
+	H func(http.ResponseWriter, *http.Request, *DBHandler)
 }
-func VerifyDatabase(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	if err := db.Ping(); err != nil {
-		fmt.Println("ERROR DB:"+err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	//next is how the negroni knows how to continue executing middleware or route handlers after middleware is finished
-	next(w, r);
+func (obj appHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Updated to pass obj.DBHandler as a parameter to our handler type.
+	obj.H( w , r , obj.DBHandler)
 
 }
+
 func serveWeb(){
+	dataBase,_ := sql.Open("mysql", "root:20121993@/addressBook")
+	context := &DBHandler{db: dataBase }
 	mux := gmux.NewRouter()
-	var objUser User
-	var objContact Contacts
-	var objDefaultInfoPage Contacts
-	var objDeleteContacts Contacts
-	var objOneContact OneContact
-	mux.HandleFunc("/",objDefaultInfoPage.serveContent)
-	mux.HandleFunc("/{page_alias}", objDefaultInfoPage.serveContent).Methods("GET")
-	mux.HandleFunc("/login",objUser.serveLogin).Methods("POST")
-	mux.HandleFunc("/add",objContact.serveAdd).Methods("PUT")
-	mux.HandleFunc("/add/{name}",objDeleteContacts.serveDelete).Methods("DELETE")
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		var objContact Contacts
+		//var urlParameter map[string]string
+		objContact.UserName = sessions.GetSession(r).Get("username").(string)
+		urlParameter := gmux.Vars(r)
+		page_alias, staticPage := objContact.serveContent(urlParameter)
+		P, err := objContact.serveContentTwo(context)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if page_alias == "home" {
+			staticPage.Execute(w,P)
+		}else{
+			staticPage.Execute(w,nil)
+		}
+
+
+	})
+	mux.HandleFunc("/{page_alias}", func(w http.ResponseWriter, r *http.Request) {
+		var objContact Contacts
+		//var urlParameter map[string]string
+		objContact.UserName = sessions.GetSession(r).Get("username").(string)
+		urlParameter := gmux.Vars(r)
+		page_alias, staticPage := objContact.serveContent(urlParameter)
+		P, err := objContact.serveContentTwo(context)
+		if err != nil{
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if page_alias == "home" {
+			staticPage.Execute(w,P)
+		}else{
+			staticPage.Execute(w,nil)
+		}
+	}).Methods("GET")
+
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		var p LoginPage
+		var objUser User
+		var regChoice = r.FormValue("register")
+		objUser.UserName = r.FormValue("username")
+		objUser.Secret = []byte(r.FormValue("password"))
+		if regChoice != "" {
+			err := objUser.serveRegister(context)
+			if err != nil{
+				http.Error(w,err.Error(),http.StatusInternalServerError)
+				return
+			}
+			http.Redirect(w,r,"/login",http.StatusFound)
+			return
+		} else { //login process
+			var err error
+			var user *sql.Stmt
+			var pass User
+			err, user, pass = objUser.serveLogin(context)
+
+			//////////////////////////////////////////////////
+			if err!= nil {
+				fmt.Println("ERROR LOGIN #1: ", err.Error())
+				p.Error = err.Error()
+
+			}else if user == nil {
+				fmt.Println("ERROR LOGIN #: ", err.Error())
+				p.Error = "NO SUCH USER WITH USERNAME "+ objUser.UserName
+				return
+			}else{//the user isn't nil we'll perform a hard cast on object returned from the database to access user object
+
+				//RETURN NIL ON SUCCESS authentication AND ERROR ON failure
+				if err = bcrypt.CompareHashAndPassword([]byte(pass.Secret),[]byte(objUser.Secret)); err != nil {
+					//if the err isn't nil let's set the err property on the page object
+					fmt.Println("ERROR LOGIN #3: ",err.Error())
+					p.Error = err.Error()
+					return
+				}else {
+					sessions.GetSession(r).Set("username",objUser.UserName)
+					fmt.Println("I REDIRECTED HERE IN / AGAIN")
+					http.Redirect(w,r,"/home",http.StatusFound)
+					return
+				}
+			}
+		}
+
+	}).Methods("POST")
+	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
+		var objAddContact Contacts
+		objAddContact.Name =r.FormValue("name")
+		objAddContact.Mob = r.FormValue("mob")
+		objAddContact.Email = r.FormValue("email")
+		objAddContact.Address = r.FormValue("address")
+		objAddContact.Nationality = r.FormValue("nationality")
+		objAddContact.UserName = sessions.GetSession(r).Get("username").(string)
+
+		b, err := objAddContact.serveAdd(context)
+		if err != nil{
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err:= json.NewEncoder(w).Encode(b); err != nil {
+			fmt.Println("ERRORRRRR : " + err.Error())
+			http.Error(w,err.Error(),http.StatusInternalServerError)
+			return
+		}
+	}).Methods("PUT")
+
+	mux.HandleFunc("/deleteContact/{name}", func(w http.ResponseWriter, r *http.Request) {
+		var objDeleteContacts Contacts
+		objDeleteContacts.Name = gmux.Vars(r)["name"]
+		err := objDeleteContacts.serveDelete(context)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK) //to send 200 status okay along with the response object when we return
+	}).Methods("DELETE")
+
 	mux.HandleFunc("/login", logoutHandler).Methods("GET")
-	mux.HandleFunc("/home/{name}",objOneContact.ServeOneContact).Methods("GET")
-	mux.HandleFunc("/home/{name}",objOneContact.ServeAddMoreContactNum).Methods("PUT")
-	mux.HandleFunc("/add/{contact_numbers}",objOneContact.serveOneDelete).Methods("DELETEE")
-	//mux.HandleFunc("/",objDefaultInfoPage.serveShowInfo).Methods("")
+
+	mux.HandleFunc("/home/{name}", func(w http.ResponseWriter, r *http.Request) {
+		var objOneContact OneContact
+		objOneContact.Name = gmux.Vars(r)["name"]
+
+		P, err := objOneContact.ServeOneContact(context)
+		if err != nil{
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err:= json.NewEncoder(w).Encode(P); err != nil {
+			fmt.Println("ERRORRRRR One contact: " + err.Error())
+			http.Error(w,err.Error(),http.StatusInternalServerError)
+			return
+		}
+	}).Methods("GET")
+
+	mux.HandleFunc("/home/{name}", func(w http.ResponseWriter, r *http.Request) {
+		var objAddmoreContactNum OneContact
+		objAddmoreContactNum.Name = gmux.Vars(r)["name"]
+		objAddmoreContactNum.Mob = r.FormValue("contact_numbers")
+
+		b, err := objAddmoreContactNum.ServeAddMoreContactNum(context)
+		if err != nil{
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err:= json.NewEncoder(w).Encode(b); err != nil {
+			fmt.Println("ERRORRRRR : " + err.Error())
+			http.Error(w,err.Error(),http.StatusInternalServerError)
+			return
+		}
+	}).Methods("PUT")
+
+	mux.HandleFunc("/deleteOneContact/{contact_numbers}", func(w http.ResponseWriter, r *http.Request) {
+		var objOneContact OneContact
+		objOneContact.Mob = gmux.Vars(r)["contact_numbers"]
+
+		err := objOneContact.serveOneDelete(context)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}).Methods("DELETE")
 
 	mux.HandleFunc("/css/{page_alias}",serveResource) //Ex: css/bootstrap.min.css
 	mux.HandleFunc("/img/",serveResource)
@@ -91,264 +236,151 @@ func serveWeb(){
 	n.Use(sessions.Sessions("Web01",cookiestore.New([]byte("my-secret-123"))))
 	//here we add a call to use our negroni middleware
 	//we add our middleware before handler so it runs first
-	n.Use(negroni.HandlerFunc(VerifyDatabase))
+	//n.Use(negroni.HandlerFunc(objDbHandler.VerifyDatabase))
 	n.UseHandler(mux)      //adding the multiplexer
 	n.Run(":8080")
 
 }
 
-func (obj OneContact) ServeAddMoreContactNum(w http.ResponseWriter, r *http.Request){
-	fmt.Println("the name here :",gmux.Vars(r)["name"])
-	fmt.Println("the num here :",r.FormValue("contact_numbers"))
-	result, err := db.Exec("INSERT INTO numbers (name,contact_numbers) VALUES (?, ?) ",
-		gmux.Vars(r)["name"], r.FormValue("contact_numbers"))
-	if err!=nil {
-		fmt.Println("ERR ONE CONT NUM :",err.Error())
-		http.Error(w,err.Error(),http.StatusInternalServerError)
-	}
+func (obj OneContact) ServeAddMoreContactNum(DBObj *DBHandler) (b Contacts, err error){
+
+	result, err := DBObj.db.Exec("INSERT INTO numbers (name,contact_numbers) VALUES (?, ?) ",
+		obj.Name, obj.Mob)
+
 	x,_ := result.LastInsertId()
 	fmt.Println("RESULT ONE ROW :" ,x)
-	b:= Contacts{
-		Name: gmux.Vars(r)["name"], //hab3t el name sa7 f el beet
-		Mob:  r.FormValue("contact_numbers"),
-	}
-	if err:= json.NewEncoder(w).Encode(b); err != nil {
-		fmt.Println("ERRORRRRR : " + err.Error())
-		http.Error(w,err.Error(),http.StatusInternalServerError)
-	}
-
-}
-
-func (obj OneContact) ServeOneContact(w http.ResponseWriter, r *http.Request){
-	P := []OneContact{}
-	fmt.Println("One Contact: ",gmux.Vars(r)["name"])
-	rows,err:= db.Query("select * from numbers where name=?",gmux.Vars(r)["name"])
-	if err!=nil {
-		http.Error(w,err.Error(),http.StatusInternalServerError)
-
-	}
-	for rows.Next(){
-		err = rows.Scan(&obj.Name,&obj.Mob)
-		if err!=nil {
-			http.Error(w,err.Error(),http.StatusInternalServerError)
-		}
-		 P = append(P,obj)
-	}
-
-	fmt.Println("MOBILEEEE : ",P)
-	//staticPages.Execute(w,P)
-	/*b:= Contacts{
-		Name: gmux.Vars(r)["name"],
+	b = Contacts{
+		Name: obj.Name,
 		Mob:  obj.Mob,
-	}*/
-	if err:= json.NewEncoder(w).Encode(P); err != nil {
-		fmt.Println("ERRORRRRR One contact: " + err.Error())
-		http.Error(w,err.Error(),http.StatusInternalServerError)
 	}
+	return b, err
+}
+
+func (obj OneContact) ServeOneContact(DBObj *DBHandler) (P []OneContact, err error){
+
+	rows, err:= DBObj.db.Query("select * from numbers where name=?", obj.Name)
+	defer rows.Close()
+
+	for rows.Next(){
+		err = rows.Scan(&obj.Name, &obj.Mob)
+		if err!=nil {
+			return
+		}
+		P = append(P, obj)
+	}
+	return P, err
+
 }
 
 
-func (obj Contacts) serveAdd(w http.ResponseWriter, r *http.Request)  {
-	fmt.Println("Did you come here ?")
-	result, err := db.Exec("INSERT INTO contacts (name,mob,email,address,nationality,user_Name) VALUES (?, ?, ?,?,?,?) ",
-		r.FormValue("name"), r.FormValue("mob"), r.FormValue("email"),r.FormValue("address"), r.FormValue("nationality"),sessions.GetSession(r).Get("username"))
-	_,err1 := db.Exec("insert into numbers (name,contact_numbers) values (?,?) ",r.FormValue("name"),r.FormValue("mob"))
+func (obj Contacts) serveAdd(DBObj *DBHandler) (b Contacts, err error) {
+
+	result, err := DBObj.db.Exec("INSERT INTO contacts (name,mob,email,address,nationality,user_Name) VALUES (?, ?, ?,?,?,?) ",
+		obj.Name, obj.Mob, obj.Email, obj.Address, obj.Nationality, obj.UserName)
+	_,err1 := DBObj.db.Exec("insert into numbers (name,contact_numbers) values (?,?) ",obj.Name,obj.Mob)
 	if err != nil || err1 !=nil {
 		fmt.Println("ERROR Contacts/add :" + err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	fmt.Println("RESULT : ", result)
 	x,_ := result.LastInsertId()
 	fmt.Println("LAST INSERTED ROW: ",x)
-	b:= Contacts{
-		Name: r.FormValue("name"),
-		Mob:  r.FormValue("mob"),
-		Email:r.FormValue("email"),
-		Address:r.FormValue("address"),
-		Nationality:r.FormValue("nationality"),
+	b = Contacts{
+		Name: obj.Name,
+		Mob:  obj.Mob,
+		Email:obj.Email,
+		Address:obj.Address,
+		Nationality:obj.Nationality,
 	}
-	if err:= json.NewEncoder(w).Encode(b); err != nil {
-		fmt.Println("ERRORRRRR : " + err.Error())
-		http.Error(w,err.Error(),http.StatusInternalServerError)
-	}
+	return b, err
 }
 
-func (obj User) serveLogin(w http.ResponseWriter, r *http.Request)  {
-	fmt.Println("Did you SERVE LOGIN ?")
-	var p LoginPage
-	if r.FormValue("register") != ""{
-		fmt.Println("hello From Register: ",r.FormValue("register"))
-		//if we need to register we'll need a bcrypt hash from the given pass
-		secret,_ := bcrypt.GenerateFromPassword([]byte(r.FormValue("password")),bcrypt.DefaultCost)
-		s := string(secret[:])
-		fmt.Println("SECRET PASS = ",s)
-		user := User{r.FormValue("username"),secret} //new user object
+func (obj User) serveRegister(DBObj *DBHandler) (error) {
+	secret, _ := bcrypt.GenerateFromPassword([]byte(obj.Secret),bcrypt.DefaultCost)
+	user := User{obj.UserName,secret} //new user object
+	_, err := DBObj.db.Exec("INSERT INTO users (username,secret) VALUES (?, ?)", user.UserName, user.Secret)
 
-		fmt.Println("hello from Train Register two :",r.FormValue("username"))
-		fmt.Println("Let's Print user : ",user.UserName)
-		fmt.Println("Let's print Pass : ",string(user.Secret))
+	return err
+
+}
+func (obj User) serveLogin(DBObj *DBHandler) (p error, user *sql.Stmt, usr User)  {
 
 
-		_, err := db.Exec("INSERT INTO users (username,secret) VALUES (?, ?)", user.UserName, user.Secret)
-		if err != nil {
-			fmt.Println("ERROR USER INSERT :" + err.Error())
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-
-		fmt.Println("I REDIRECTED TO / page")
-		http.Redirect(w,r,"/login",http.StatusFound)
-		return
-
-		fmt.Println("Did You come here?")
-	}else if r.FormValue("login") != "" {
-		fmt.Println("hello from Train Register two :",r.FormValue("username"))
-		//user, err := dbmap.Get(User{},r.FormValue("username"))
-		//////////////////////////////////////////////////
-		var usr User
 		var us string
-		us = r.FormValue("username")
-		fmt.Println("USERNAME : ",us)
-		var pa string
+		us = obj.UserName
 
-		pa = r.FormValue("password")
-		fmt.Println("PASSWORD : ",pa)
-		//fmt.Println("select * from users where secret =?",[]byte(pa))
-
-		user,err := db.Prepare("select * from users where username =?")
-		rows,err1 := user.Query(us);
-		if err1!=nil{
-			fmt.Println("ERROR QUERY :",err1.Error())
+		user, err := DBObj.db.Prepare("select * from users where username =?")
+		rows, err1 := user.Query(us);
+		defer user.Close()
+		if err1 != nil{
+			p = err1
+			fmt.Println("ERROR QUERY :", err1.Error())
+			return
 		}
 
 		for rows.Next() {
-			err := rows.Scan(&usr.UserName,&usr.Secret)
+			err := rows.Scan(&usr.UserName, &usr.Secret)
 			if err!=nil {
-				fmt.Println("ERRRR: ",err.Error())
-			}
-		}
-
-		fmt.Println("USERR EQUAL :",rows)
-
-		if err != nil {
-			fmt.Println("ERROR USERS login:"+err.Error())
-			p.Error = err.Error()
-			http.Error(w,err.Error(),http.StatusInternalServerError)
-			return
-		}
-
-		//////////////////////////////////////////////////
-		fmt.Println("USERNAME : ",us)
-		fmt.Println("PASSWORD : ",pa)
-
-		fmt.Println("hello from Train Register two :",r.FormValue("username"))
-		if err!= nil {
-			fmt.Println("ERROR LOGIN #1:", err.Error())
-			p.Error = err.Error()
-		}else if user == nil {
-			fmt.Println("ERROR LOGIN #:",err.Error())
-			p.Error = "NO SUCH USER WITH USERNAME "+ r.FormValue("username")
-		}else{//the user isn't nil we'll perform a hard cast on object returned from the database to access user object
-
-			//RETURN NIL ON SUCCESS authentication AND ERROR ON failure
-			fmt.Println("HASH: ",[]byte(usr.Secret))
-			fmt.Println("PASS comp: ",[]byte(pa))
-			if err = bcrypt.CompareHashAndPassword([]byte(usr.Secret),[]byte(r.FormValue("password"))); err != nil {
-				//if the err isn't nil let's set the err property on the page object
-				fmt.Println("ERROR LOGIN #3: ",err.Error())
-				p.Error = err.Error()
-			}else {
-				sessions.GetSession(r).Set("username",r.FormValue("username"))
-				fmt.Println("I REDIRECTED HERE IN / AGAIN")
-				http.Redirect(w,r,"/home",http.StatusFound)
+				fmt.Println("ERRRR: ", err.Error())
+				p = err
 				return
 			}
 		}
-
-	}
-
-}
-
-func (obj Contacts)serveContent(w http.ResponseWriter, r *http.Request)  {
-	fmt.Println("Hello From ServeCONTENT")
-	P := PContacts{Cont:[]Contacts{}}
-	urlParameter := gmux.Vars(r)
-	page_alias := urlParameter["page_alias"]
-	if page_alias == "" {
-		page_alias="home"
-		fmt.Println("1")
-	}
-	staticPage := staticPages.Lookup(page_alias + ".html")
-	if page_alias == "home" {
-		fmt.Println("2")
-		fmt.Println("USERNAME SESSION :",sessions.GetSession(r).Get("username"))
-		var str string
-		str = sessions.GetSession(r).Get("username").(string)
-		fmt.Println("STR : ",str)
-		u,err:= db.Prepare("select * from contacts where user_Name=?") //u stands for users
-		rows,err:=u.Query(str)
+		defer rows.Close()
 		if err != nil {
-			fmt.Println("ERROR ServeContent:"+err.Error())
-			http.Error(w,err.Error(),http.StatusInternalServerError)
+			fmt.Println("ERROR USERS login: "+err.Error())
+			p = err
 			return
 		}
-		fmt.Println("ROWS :", rows)
-		fmt.Println("3")
-		for rows.Next(){
-			//var b Contacts
-			err := rows.Scan(&obj.Name, &obj.Mob, &obj.Email,&obj.Address, &obj.Nationality, &obj.UserName) //& so scan can edit the properties in memory
-			if err!=nil {
-				fmt.Println("ERRRR: ",err.Error())
-			}
-			fmt.Println("4")
-			P.Cont = append(P.Cont,obj)
-			fmt.Println("5")
-		}
+		return p, user, usr
 
-		fmt.Println("DATA :",P.Cont)
-		fmt.Println("Before 6:",staticPage.Name())
-
-		if len(P.Cont)>0 { //hya msh shaghala sa7 leh???????????????????????????
-
-			fmt.Println("BOM")
-			fmt.Println("AGAIN P: ",P.Cont)
-			staticPage.Execute(w,P)
-
-		}else{
-			fmt.Println("CAROL")
-			staticPage.Execute(w,nil)
-		}
-
-		fmt.Println("6")
-	}else {
-		fmt.Println("7")
-		//fmt.Println("stat HERE: "+ staticPage.Name())
-		fmt.Println("8")
-		if staticPage == nil {
-			staticPage = staticPages.Lookup("404.html")
-			w.WriteHeader(404)
-		}
-		staticPage.Execute(w, nil)
-	}
 }
 
-func (obj Contacts)serveDelete(w http.ResponseWriter, r *http.Request){
-	fmt.Println("DELETE : ",gmux.Vars(r)["name"])
-	if _,err:= db.Exec("delete from contacts where name = ?", gmux.Vars(r)["name"]); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+func (obj Contacts)serveContent(urlParameter map[string]string) (page_alias string, staticPage *template.Template) {
+
+	//P := PContacts{Cont:[]Contacts{}}
+
+	page_alias = urlParameter["page_alias"]
+
+	if page_alias == "" {
+		page_alias = "home"
+		fmt.Println("1")
 	}
+	staticPage = populateStaticPages().Lookup(page_alias + ".html")
+	if staticPage == nil {
+		staticPage = populateStaticPages().Lookup("404.html")
+	}
+	return page_alias, staticPage
+}
+func (obj Contacts) serveContentTwo(DBObj *DBHandler)(P PContacts, err error){
+	var str string
+	str = obj.UserName
+	u, err:= DBObj.db.Prepare("select * from contacts where user_Name=?") //u stands for users
+	defer u.Close()
+	rows, err := u.Query(str)
+
+	for rows.Next(){
+		//var b Contacts
+		err = rows.Scan(&obj.Name, &obj.Mob, &obj.Email, &obj.Address, &obj.Nationality, &obj.UserName) //& so scan can edit the properties in memory
+
+		P.Cont = append(P.Cont,obj)
+	}
+	defer rows.Close()
+	return P, err
+}
+
+func (obj Contacts)serveDelete(DBObj *DBHandler) (err error){
+
+	_,err = DBObj.db.Exec("delete from contacts where name = ?", obj.Name)
+
 	//Tell the caller that everything is okay
-	w.WriteHeader(http.StatusOK) //to send 200 status okay along with the response object when we return
+	return err
 }
 
-func (obj OneContact)serveOneDelete(w http.ResponseWriter, r *http.Request){
-	fmt.Println("DELETE one : ",gmux.Vars(r)["contact_numbers"])
-	if _,err := db.Exec("delete from numbers where contact_numbers=?",gmux.Vars(r)["contact_numbers"]); err != nil {
-		http.Error(w,err.Error(),http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
+func (obj OneContact)serveOneDelete(DBObj *DBHandler) (err error){
+	//mob
+	_,err = DBObj.db.Exec("delete from numbers where contact_numbers=?", obj.Mob)
+	return err
 }
 
 //retrieve all files under subsequent page folders
@@ -374,7 +406,7 @@ func getThemeName() string {
 
 //to serve CSS files and apply it on site
 func serveResource (w http.ResponseWriter, r *http.Request){
-	path := "public/" + themeName + r.URL.Path
+	path := "public/" + getThemeName() + r.URL.Path
 	var contentType string
 
 	if strings.HasSuffix(path,".css"){
@@ -417,3 +449,8 @@ func clearSession(w http.ResponseWriter) {
 		     }
 	     http.SetCookie(w, cookie)
 	 }
+
+func main() {
+
+	serveWeb()
+}
