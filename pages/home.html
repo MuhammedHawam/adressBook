@@ -71,11 +71,11 @@
 <!-- addInfo-form was search-form -->
 <div id="view-page">
     <form id="addInfo-form" onsubmit="return false" style="text-align: center; width: 800px; clear:both; margin: 0 auto; ">
-        Name:   <input name="name"/><br>
-        Mobile: <input name="mob"/><br>
-        Email:  <input name="email"/><br>
-        Address:<input name="address"/><br>
-        Nationality: <input name="nationality"><br>
+        Name:   <input name="name" required/><br>
+        Mobile: <input name="mob" required/><br>
+        Email:  <input name="email" required/><br>
+        Address:<input name="address" required/><br>
+        Nationality: <input name="nationality" required/><br>
         <input type="submit" value="Confirm" onclick="subConfirm()"/>
     </form>
     <br>
@@ -211,10 +211,10 @@
     }
     function deleteOneContact(number){
         console.log(number);
-        
+
         $.ajax({
-            method: "DELETEE",
-            url: "/add/" + number,
+            method: "DELETE",
+            url: "/deleteOneContact/" + number,
             success: function(){
                 $("#contact-row-"+ number).remove();
             }
@@ -225,7 +225,7 @@
         console.log(name);
         $.ajax({
             method: "DELETE",
-            url: "/add/" + name,
+            url: "/deleteContact/" + name,
             success: function(){
                 $("#contact-row-" + name).remove();
             }
